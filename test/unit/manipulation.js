@@ -2492,3 +2492,80 @@ test( "Self-closing tags are not expanded, so markup inside raw text elements st
 	equal( nodes.length, 1, "jQuery.parseHTML: single node created from textarea payload" );
 	equal( nodes[ 0 ].nodeName.toLowerCase(), "textarea", "jQuery.parseHTML: the node is the textarea" );
 });
+
+// Parsed where it is inserted, the svg below is never closed: the raw text tag is an SVG
+// element and the img only lives inside an attribute value. Wrapped in a <select>,
+// "</select>" closes the svg, the raw text tag becomes an HTML element whose text ends
+// inside that attribute value, and the img goes live.
+function optionPayload( tag, rawtext, img ) {
+	return "<" + tag + "><svg></select><" + rawtext + "><a id=\"</" + rawtext + "><div>" +
+		img + "\"></a></" + rawtext + "></svg></" + tag + ">";
+}
+
+// Support: IE<=9
+// IE <=9 drops <option> tags parsed outside of a select element, so jQuery still wraps
+// <option> and <optgroup> markup in a <select> there.
+if ( jQuery.support.option !== false ) {
+
+test( "<option> and <optgroup> markup is not parsed inside a <select> wrapper (CVE-2020-11023)", 34, function() {
+	var fixture = jQuery("#qunit-fixture"),
+		img = "<img src='x' onerror='jQuery.noop()'>",
+		option = optionPayload( "option", "style", img ),
+		optgroup = optionPayload( "optgroup", "style", img ),
+
+		// No <script>, <style> or <link>, so .html() takes its innerHTML shortcut
+		shortcut = optionPayload( "option", "xmp", img ),
+
+		// Advisory payload; legacy select parsing drops the <style> start tag
+		advisory = "<option><style></option></select>" + img + "</style>",
+
+		check = function( $container, tag, label ) {
+			equal( $container.find("img").length, 0, label + ": no img element was created" );
+			equal( $container.children().length, 1, label + ": a single element was created" );
+			equal( $container.children( tag ).length, 1, label + ": the element is the " + tag );
+		};
+
+	// jQuery( html ) and jQuery.parseHTML
+	jQuery.each( { option: option, optgroup: optgroup, advisory: advisory }, function( name, html ) {
+		var tag = name === "optgroup" ? "optgroup" : "option";
+
+		check( jQuery("<div></div>").append( jQuery( html ) ), tag, "jQuery( " + name + " )" );
+		check( jQuery("<div></div>").append( jQuery( jQuery.parseHTML( html ) ) ), tag,
+			"jQuery.parseHTML( " + name + " )" );
+	});
+
+	// .html() falling back to .append() and its innerHTML shortcut
+	check( jQuery("<div></div>").appendTo( fixture ).html( option ), "option", ".html()" );
+	check( jQuery("<div></div>").appendTo( fixture ).html( shortcut ), "option", ".html() shortcut" );
+
+	// Every domManip-based insertion method
+	jQuery.each( [ "append", "prepend", "before", "after", "replaceWith" ], function( i, method ) {
+		var $parent = jQuery("<div><span></span></div>").appendTo( fixture ),
+			$target = method === "append" || method === "prepend" ? $parent : $parent.children();
+
+		$target[ method ]( option );
+		equal( $parent.find("img").length, 0, method + "(): no img element was created" );
+		equal( $parent.find("option").length, 1, method + "(): option element inserted" );
+	});
+});
+
+asyncTest( "Handlers hidden in <option> markup never run (CVE-2020-11023)", 1, function() {
+	var fixture = jQuery("#qunit-fixture"),
+		img = "<img src='data:,' onerror='window.cve202011023 = true'>";
+
+	Globals.register("cve202011023");
+	window.cve202011023 = false;
+
+	jQuery( optionPayload( "option", "style", img ) ).appendTo( fixture );
+	jQuery( jQuery.parseHTML( optionPayload( "optgroup", "style", img ) ) ).appendTo( fixture );
+	jQuery("<div></div>").appendTo( fixture ).html( optionPayload( "option", "style", img ) );
+	jQuery("<div></div>").appendTo( fixture ).html( optionPayload( "option", "xmp", img ) );
+	fixture.append( optionPayload( "optgroup", "style", img ) );
+
+	setTimeout(function() {
+		strictEqual( window.cve202011023, false, "No injected onerror handler ran" );
+		start();
+	}, 500 );
+});
+
+}
