@@ -1237,7 +1237,7 @@ function testReplaceWith( val ) {
 
 
 	child = jQuery("#qunit-fixture").children().first();
-	$div = jQuery("<div class='pathological'/>").insertBefore( child );
+	$div = jQuery("<div class='pathological'></div>").insertBefore( child );
 	$div.replaceWith( $div );
 	deepEqual( jQuery( ".pathological", "#qunit-fixture" ).get(), $div.get(),
 		"Self-replacement" );
@@ -1615,7 +1615,7 @@ function testHtml( valueObj ) {
 		div = jQuery("<div></div>"),
 		fixture = jQuery("#qunit-fixture");
 
-	div.html( valueObj("<div id='parent_1'><div id='child_1'/></div><div id='parent_2'/>") );
+	div.html( valueObj("<div id='parent_1'><div id='child_1'></div></div><div id='parent_2'></div>") );
 	equal( div.children().length, 2, "Found children" );
 	equal( div.children().children().length, 1, "Found grandchild" );
 
@@ -2231,7 +2231,7 @@ test( "Guard against exceptions when clearing safeChildNodes", function() {
 	var div;
 
 	try {
-		div = jQuery("<div/><hr/><code/><b/>");
+		div = jQuery("<div></div><hr/><code></code><b></b>");
 	} catch(e) {}
 
 	ok( div && div.jquery, "Created nodes safely, guarded against exceptions on safeChildNodes[ -1 ]" );
@@ -2331,7 +2331,7 @@ test( "script evaluation (#11795)", function() {
 			"<script>ok( true, 'evaluated: inner no type' );</script>",
 		"</div>"
 	].join(""));
-	scriptsIn.appendTo( jQuery("<div class='detached'/>") );
+	scriptsIn.appendTo( jQuery("<div class='detached'></div>") );
 	objGlobal.ok = isOk;
 
 	scriptsOut = fixture.append( scriptsIn ).find("script");
@@ -2348,7 +2348,7 @@ test( "script evaluation (#11795)", function() {
 
 	if ( jQuery.ajax ) {
 		Globals.register("testBar");
-		jQuery("#qunit-fixture").append( "<script src='" + url("data/testbar.php") + "'/>" );
+		jQuery("#qunit-fixture").append( "<script src='" + url("data/testbar.php") + "'></script>" );
 		strictEqual( window["testBar"], "bar", "Global script evaluation" );
 	} else {
 		ok( true, "No jQuery.ajax" );
@@ -2370,7 +2370,7 @@ test( "jQuery._evalUrl (#12838)", function() {
 		equal( ( input.url || input ).slice( -1 ), expectedArgument, message );
 		expectedArgument++;
 	};
-	jQuery("#qunit-fixture").append("<script src='1'/><script src='2'/>");
+	jQuery("#qunit-fixture").append("<script src='1'></script><script src='2'></script>");
 	equal( expectedArgument, 3, "synchronous execution" );
 
 	message = "custom implementation";
@@ -2379,7 +2379,7 @@ test( "jQuery._evalUrl (#12838)", function() {
 	jQuery.ajax = function( options ) {
 		strictEqual( options, {}, "Unexpected call to jQuery.ajax" );
 	};
-	jQuery("#qunit-fixture").append("<script src='3'/><script src='4'/>");
+	jQuery("#qunit-fixture").append("<script src='3'></script><script src='4'></script>");
 
 	jQuery.ajax = ajax;
 	jQuery._evalUrl = evalUrl;
@@ -2422,7 +2422,7 @@ test( "insertAfter, insertBefore, etc do not work when destination is original e
 test( "Index for function argument should be received (#13094)", 2, function() {
 	var i = 0;
 
-	jQuery("<div/><div/>").before(function( index ) {
+	jQuery("<div></div><div></div>").before(function( index ) {
 		equal( index, i++, "Index should be correct" );
 	});
 
@@ -2435,4 +2435,60 @@ test( "Make sure jQuery.fn.remove can work on elements in documentFragment", 1, 
 	jQuery( div ).remove();
 
 	equal( fragment.childNodes.length, 0, "div element was removed from documentFragment" );
+});
+
+test( "Self-closing tags are not expanded, so markup inside raw text elements stays inert (CVE-2020-11022)", 32, function() {
+	var $div, $nodes, nodes,
+		fixture = jQuery("#qunit-fixture"),
+		img = "<img src='x' onerror='jQuery.noop()'>",
+		script = "<script>ok( false, 'CVE-2020-11022 payload executed' );</script>",
+
+		// Expanding "<style/>" to "<style></style>" would close the outer style element
+		// and turn the img and script that a sanitizer saw as text into live elements
+		rawtext = "<style><style/>" + img + script + "</style>",
+
+		// Same break-out through an RCDATA element, using the innerHTML shortcut of .html()
+		rcdata = "<textarea><textarea/>" + img + "</textarea>";
+
+	// .html() falling back to .append() (value contains "<style")
+	$div = jQuery("<div></div>").appendTo( fixture ).html( rawtext );
+	equal( $div.children().length, 1, ".html(): single element created" );
+	equal( $div.children()[ 0 ].nodeName.toLowerCase(), "style", ".html(): the element is the style" );
+	equal( $div.find("img").length, 0, ".html(): no img element escaped the style element" );
+	equal( $div.find("script").length, 0, ".html(): no script element escaped the style element" );
+	equal( $div.children().text(), "<style/>" + img + script, ".html(): payload kept as style text" );
+
+	// .html() innerHTML shortcut
+	$div = jQuery("<div></div>").appendTo( fixture ).html( rcdata );
+	equal( $div.children().length, 1, ".html() shortcut: single element created" );
+	equal( $div.children()[ 0 ].nodeName.toLowerCase(), "textarea", ".html() shortcut: the element is the textarea" );
+	equal( $div.find("img").length, 0, ".html() shortcut: no img element escaped the textarea" );
+	equal( $div.children().val(), "<textarea/>" + img, ".html() shortcut: payload kept as textarea value" );
+
+	// Every domManip-based insertion method
+	jQuery.each( [ "append", "prepend", "before", "after", "replaceWith" ], function( i, method ) {
+		var $parent = jQuery("<div><span></span></div>").appendTo( fixture ),
+			$target = method === "append" || method === "prepend" ? $parent : $parent.children();
+
+		$target[ method ]( rawtext );
+		equal( $parent.find("style").length, 1, method + "(): style element inserted" );
+		equal( $parent.find("img").length, 0, method + "(): no img element escaped the style element" );
+		equal( $parent.find("script").length, 0, method + "(): no script element escaped the style element" );
+	});
+
+	// jQuery( html )
+	$nodes = jQuery( rcdata );
+	equal( $nodes.length, 1, "jQuery( html ): single element created from textarea payload" );
+	equal( $nodes[ 0 ].nodeName.toLowerCase(), "textarea", "jQuery( html ): the element is the textarea" );
+	$nodes = jQuery( rawtext );
+	equal( $nodes.length, 1, "jQuery( html ): single element created from style payload" );
+	equal( $nodes[ 0 ].nodeName.toLowerCase(), "style", "jQuery( html ): the element is the style" );
+
+	// jQuery.parseHTML
+	nodes = jQuery.parseHTML( rawtext, document, true );
+	equal( nodes.length, 1, "jQuery.parseHTML: single node created from style payload" );
+	equal( nodes[ 0 ].nodeName.toLowerCase(), "style", "jQuery.parseHTML: the node is the style" );
+	nodes = jQuery.parseHTML( rcdata );
+	equal( nodes.length, 1, "jQuery.parseHTML: single node created from textarea payload" );
+	equal( nodes[ 0 ].nodeName.toLowerCase(), "textarea", "jQuery.parseHTML: the node is the textarea" );
 });

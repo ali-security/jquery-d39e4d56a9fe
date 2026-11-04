@@ -1171,7 +1171,7 @@ test("trigger(eventObject, [data], [fn])", function() {
 	expect(28);
 
 	var event,
-		$parent = jQuery("<div id='par' />").appendTo("body"),
+		$parent = jQuery("<div id='par'></div>").appendTo("body"),
 		$child = jQuery("<p id='child'>foo</p>").appendTo( $parent );
 
 	$parent.get( 0 ).style.display = "none";
